@@ -21,6 +21,18 @@ Originally, Battle Party required several server-side components in order to to 
 
 To simplify development and deployment, all but the last component have been combined into one piece of software, which is available under the `ATBPServer` directory. The SmartFoxServer2X extension lives under the `ATBPExtension` directory.
 
+### Android Support
+The lobby server (`ATBPServer`) supports WebSocket connections in addition to the legacy raw TCP protocol. This allows Android clients to connect to the lobby server using standard WebSocket APIs, which are widely supported and not blocked by mobile networks the way that raw TCP connections on non-standard ports can be.
+
+**How it works:**
+* The existing raw TCP lobby server on port `6778` continues to work for the Unity Web Player client
+* A new WebSocket lobby server is available on port `6779` (configurable via `config.lobbyserver.wsPort`)
+* Both servers share the same game logic and player state
+* The WebSocket server uses the same JSON message format as the TCP server, but without the 2-byte length prefix (WebSocket has built-in message framing)
+* The SmartFoxServer2X game server already supports Android via its [Android SDK](https://www.smartfoxserver.com/downloads)
+
+To connect an Android client to the lobby server using WebSocket, connect to `ws://<host>:6779` and send/receive JSON messages in the same format as the TCP protocol (`{"req":"...", "payload":{...}}`/`{"cmd":"...", "payload":{...}}`).
+
 ~~More in-depth explanations of each component, how the client interacts with them, and how request/response packets are structured can be found in the `docs/` folder.~~
 This is unfortunately not available yet, but work is slowly being done. For the time being, feel free to reference the `dev-general` channel in [the Discord](https://discord.gg/AwmCCuAdT4), as well as decompiled client code generated via ILSpy/dnSpy.
 

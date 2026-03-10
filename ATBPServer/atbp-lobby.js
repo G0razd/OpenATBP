@@ -1,4 +1,5 @@
 const net = require('net');
+const WebSocket = require('ws');
 const config = require('./config.js');
 const matchmaking = require('./matchmaking.js');
 const dbOperations = require('./db-operations.js');
@@ -59,10 +60,14 @@ function sendAll(sockets, response) {
   response = JSON.stringify(response);
   for (var socket of sockets) {
     //    console.log('Sending to ' + socket.player.name + '->', response);
-    let lengthBytes = Buffer.alloc(2);
-    lengthBytes.writeInt16BE(Buffer.byteLength(response, 'utf8'));
-    socket.write(lengthBytes);
-    socket.write(response);
+    if (typeof socket.send === 'function') {
+      socket.send(response);
+    } else {
+      let lengthBytes = Buffer.alloc(2);
+      lengthBytes.writeInt16BE(Buffer.byteLength(response, 'utf8'));
+      socket.write(lengthBytes);
+      socket.write(response);
+    }
   }
 }
 
@@ -90,13 +95,19 @@ function sendCommand(socket, command, response) {
         payload: response,
       };
       package = JSON.stringify(package);
-      let lengthBytes = Buffer.alloc(2);
-      lengthBytes.writeInt16BE(Buffer.byteLength(package, 'utf8'));
-      socket.write(lengthBytes);
-      socket.write(package, () => {
-        //  console.log('Finished sending package to ', socket.player.name);
-        resolve();
-      });
+      if (typeof socket.send === 'function') {
+        socket.send(package, () => {
+          resolve();
+        });
+      } else {
+        let lengthBytes = Buffer.alloc(2);
+        lengthBytes.writeInt16BE(Buffer.byteLength(package, 'utf8'));
+        socket.write(lengthBytes);
+        socket.write(package, () => {
+          //  console.log('Finished sending package to ', socket.player.name);
+          resolve();
+        });
+      }
     } else reject();
   });
 }
@@ -1643,6 +1654,15 @@ module.exports = class ATBPLobbyServer {
         process.exit(1);
       }
       playerCollection = mongoClient.db('openatbp').collection('users');
+
+      function handleDisconnect(socket) {
+        if (socket.player != undefined) {
+          if (socket.player.onTeam) leaveTeam(socket, true);
+          else leaveQueue(socket, true);
+          dbOperations.handleQueueData(socket.player, playerCollection);
+        }
+      }
+
       this.server = net.createServer((socket) => {
         socket.setEncoding('utf8');
 
@@ -1674,46 +1694,36 @@ module.exports = class ATBPLobbyServer {
           console.error('Socket error:', error);
           if (socket.player != undefined) {
             console.log(socket.player.name + ' had an error.');
-            if (socket.player.onTeam) leaveTeam(socket, true);
-            else leaveQueue(socket, true);
           }
           socket.destroy();
         });
 
         socket.on('close', (err) => {
           console.log(err);
-          var userExists = false;
           for (var user of users) {
             if (
               (user._readableState != undefined && user._readableState.ended) ||
               user == socket
             ) {
-              userExists = true;
-              if (user.player.onTeam) leaveTeam(user, true);
-              else leaveQueue(user, true);
-              dbOperations.handleQueueData(user.player, playerCollection);
+              handleDisconnect(user);
             }
           }
           users = users.filter(
-            (user) => !user._readableState.ended && user != socket
+            (user) => !user._readableState?.ended && user != socket
           );
         });
 
         socket.on('end', (err) => {
-          var userExists = false;
           for (var user of users) {
             if (
               (user._readableState != undefined && user._readableState.ended) ||
               user == socket
             ) {
-              userExists = true;
-              if (user.player.onTeam) leaveTeam(user, true);
-              else leaveQueue(user, true);
-              dbOperations.handleQueueData(user.player, playerCollection);
+              handleDisconnect(user);
             }
           }
           users = users.filter(
-            (user) => !user._readableState.ended && user != socket
+            (user) => !user._readableState?.ended && user != socket
           );
         });
       });
@@ -1721,6 +1731,40 @@ module.exports = class ATBPLobbyServer {
       this.server.listen(this.port, () => {
         callback();
       });
+
+      if (config.lobbyserver.wsPort) {
+        const wss = new WebSocket.Server({ port: config.lobbyserver.wsPort });
+        wss.on('connection', (wsClient, req) => {
+          wsClient.remoteAddress =
+            req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+          wsClient.on('message', (data) => {
+            // WebSocket clients are added to users[] on login via handleRequest,
+            // the same way TCP clients are.
+            let response = handleRequest(data.toString(), wsClient);
+            if (response != 'null' && response != undefined) {
+              wsClient.send(response);
+            }
+          });
+
+          wsClient.on('error', (error) => {
+            console.error('WebSocket error:', error);
+            if (wsClient.player != undefined) {
+              console.log(wsClient.player.name + ' had a WebSocket error.');
+            }
+            handleDisconnect(wsClient);
+            users = users.filter((user) => user !== wsClient);
+          });
+
+          wsClient.on('close', () => {
+            handleDisconnect(wsClient);
+            users = users.filter((user) => user !== wsClient);
+          });
+        });
+        console.info(
+          `WebSocket lobby server running on port ${config.lobbyserver.wsPort}!`
+        );
+      }
     });
   }
   stop(callback) {

@@ -19,6 +19,7 @@ services:
     ports:
       - "8000:8000" # httpserver
       - "6778:6778" # lobbyserver
+      - "6779:6779" # websocket lobbyserver (Android)
       - "843:843" # sockpol
     volumes:
       - ./ATBPServer/config.js.example:/app/config.js

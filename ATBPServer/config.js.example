@@ -13,6 +13,7 @@ config.sockpol.file = "static/crossdomain.xml";
 
 config.lobbyserver.enable = true;
 config.lobbyserver.port = 6778;
+config.lobbyserver.wsPort = 6779;
 config.lobbyserver.gameIp = '127.0.0.1';
 config.lobbyserver.gamePort = '9933';
 config.lobbyserver.matchmakingEnabled = false;
